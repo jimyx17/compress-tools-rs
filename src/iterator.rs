@@ -1,7 +1,7 @@
 use std::{
     ffi::{CStr, CString},
-    io::{Read, Seek, SeekFrom, Write},
-    slice,
+    io::{self, Read, Seek, SeekFrom, Write},
+    slice, usize,
 };
 
 use libc::{c_int, c_void};
@@ -322,6 +322,7 @@ impl<R: Read + Seek> ArchiveIterator<R> {
         let mut size = 0;
         let mut target = Vec::with_capacity(READER_BUFFER_SIZE);
 
+        println!("PASANDO POR DATA CHUNK");
         match ffi::archive_read_data_block(self.archive_reader, &mut buffer, &mut size, &mut offset)
         {
             ffi::ARCHIVE_EOF => ArchiveContents::EndOfEntry,

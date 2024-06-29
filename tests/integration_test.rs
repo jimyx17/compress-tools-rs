@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use compress_tools::*;
-use libc::S_IFREG;
-use std::{
+use libc::{printf, S_IFREG}; use std::{
     ffi::OsStr,
     io::{Cursor, ErrorKind, Read},
     path::Path,
@@ -622,6 +621,7 @@ fn iterate_zip_with_cjk_pathname() {
             .map(String::from)
             .ok_or(Error::Encoding(std::borrow::Cow::Borrowed("GBK failure")))
     };
+    println!("STRUCTURE: {:#?}", source);
     let contents = collect_iterate_results_with_encoding(source, decode_gbk);
 
     let expected: Vec<(String, usize)> = vec![
