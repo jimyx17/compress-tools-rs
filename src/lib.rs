@@ -49,13 +49,16 @@
 
 #[cfg(feature = "async_support")]
 pub mod async_support;
+mod carchive;
+
 mod error;
-mod ffi;
 #[cfg(feature = "futures_support")]
 pub mod futures_support;
 mod iterator;
 #[cfg(feature = "tokio_support")]
 pub mod tokio_support;
+// #[cfg(feature = "writer")]
+pub mod writer;
 
 use error::archive_result;
 pub use error::{Error, Result};
@@ -119,19 +122,19 @@ pub fn list_archive_files_with_encoding<R>(source: R, decode: DecodeCallback) ->
 where
     R: Read + Seek,
 {
-    let _utf8_guard = ffi::UTF8LocaleGuard::new();
+    let _utf8_guard = carchive::UTF8LocaleGuard::new();
     run_with_archive(
         Ownership::Ignore,
         source,
         |archive_reader, _, mut entry| unsafe {
             let mut file_list = Vec::new();
             loop {
-                match ffi::archive_read_next_header(archive_reader, &mut entry) {
-                    ffi::ARCHIVE_EOF => return Ok(file_list),
+                match carchive::archive_read_next_header(archive_reader, &mut entry) {
+                    carchive::ARCHIVE_EOF => return Ok(file_list),
                     value => archive_result(value, archive_reader)?,
                 }
 
-                let _utf8_guard = ffi::WindowsUTF8LocaleGuard::new();
+                let _utf8_guard = carchive::WindowsUTF8LocaleGuard::new();
                 let cstr = libarchive_entry_pathname(entry)?;
                 let file_name = decode(cstr.to_bytes())?;
                 file_list.push(file_name);
@@ -197,10 +200,10 @@ where
     R: Read,
     W: Write,
 {
-    let _utf8_guard = ffi::UTF8LocaleGuard::new();
+    let _utf8_guard = carchive::UTF8LocaleGuard::new();
     run_with_unseekable_archive(source, |archive_reader, _, mut entry| unsafe {
         archive_result(
-            ffi::archive_read_next_header(archive_reader, &mut entry),
+            carchive::archive_read_next_header(archive_reader, &mut entry),
             archive_reader,
         )?;
         libarchive_write_data_block(archive_reader, target)
@@ -235,18 +238,18 @@ pub fn uncompress_archive_with_encoding<R>(
 where
     R: Read + Seek,
 {
-    let _utf8_guard = ffi::UTF8LocaleGuard::new();
+    let _utf8_guard = carchive::UTF8LocaleGuard::new();
     run_with_archive(
         ownership,
         source,
         |archive_reader, archive_writer, mut entry| unsafe {
             loop {
-                match ffi::archive_read_next_header(archive_reader, &mut entry) {
-                    ffi::ARCHIVE_EOF => return Ok(()),
+                match carchive::archive_read_next_header(archive_reader, &mut entry) {
+                    carchive::ARCHIVE_EOF => return Ok(()),
                     value => archive_result(value, archive_reader)?,
                 }
 
-                let _utf8_guard = ffi::WindowsUTF8LocaleGuard::new();
+                let _utf8_guard = carchive::WindowsUTF8LocaleGuard::new();
                 let cstr = libarchive_entry_pathname(entry)?;
                 let target_path = CString::new(
                     dest.join(sanitize_destination_path(Path::new(&decode(
@@ -257,9 +260,9 @@ where
                 )
                 .unwrap();
 
-                ffi::archive_entry_set_pathname(entry, target_path.as_ptr());
+                carchive::archive_entry_set_pathname(entry, target_path.as_ptr());
 
-                let link_name = ffi::archive_entry_hardlink(entry);
+                let link_name = carchive::archive_entry_hardlink(entry);
                 if !link_name.is_null() {
                     let target_path = CString::new(
                         dest.join(sanitize_destination_path(Path::new(&decode(
@@ -270,14 +273,14 @@ where
                     )
                     .unwrap();
 
-                    ffi::archive_entry_set_hardlink(entry, target_path.as_ptr());
+                    carchive::archive_entry_set_hardlink(entry, target_path.as_ptr());
                 }
 
-                ffi::archive_write_header(archive_writer, entry);
+                carchive::archive_write_header(archive_writer, entry);
                 libarchive_copy_data(archive_reader, archive_writer)?;
 
                 archive_result(
-                    ffi::archive_write_finish_entry(archive_writer),
+                    carchive::archive_write_finish_entry(archive_writer),
                     archive_writer,
                 )?;
             }
@@ -339,14 +342,14 @@ where
     R: Read + Seek,
     W: Write,
 {
-    let _utf8_guard = ffi::UTF8LocaleGuard::new();
+    let _utf8_guard = carchive::UTF8LocaleGuard::new();
     run_with_archive(
         Ownership::Ignore,
         source,
         |archive_reader, _, mut entry| unsafe {
             loop {
-                match ffi::archive_read_next_header(archive_reader, &mut entry) {
-                    ffi::ARCHIVE_EOF => {
+                match carchive::archive_read_next_header(archive_reader, &mut entry) {
+                    carchive::ARCHIVE_EOF => {
                         return Err(io::Error::new(
                             io::ErrorKind::NotFound,
                             format!("path {} doesn't exist inside archive", path),
@@ -356,7 +359,7 @@ where
                     value => archive_result(value, archive_reader)?,
                 }
 
-                let _utf8_guard = ffi::WindowsUTF8LocaleGuard::new();
+                let _utf8_guard = carchive::WindowsUTF8LocaleGuard::new();
                 let cstr = libarchive_entry_pathname(entry)?;
                 let file_name = decode(cstr.to_bytes())?;
                 if file_name == path {
@@ -397,51 +400,58 @@ where
 
 fn run_with_archive<F, R, T>(ownership: Ownership, mut reader: R, f: F) -> Result<T>
 where
-    F: FnOnce(*mut ffi::archive, *mut ffi::archive, *mut ffi::archive_entry) -> Result<T>,
+    F: FnOnce(
+        *mut carchive::archive,
+        *mut carchive::archive,
+        *mut carchive::archive_entry,
+    ) -> Result<T>,
     R: Read + Seek,
 {
-    let _utf8_guard = ffi::UTF8LocaleGuard::new();
+    let _utf8_guard = carchive::UTF8LocaleGuard::new();
     unsafe {
-        let archive_entry: *mut ffi::archive_entry = std::ptr::null_mut();
-        let archive_reader = ffi::archive_read_new();
-        let archive_writer = ffi::archive_write_disk_new();
+        let archive_entry: *mut carchive::archive_entry = std::ptr::null_mut();
+        let archive_reader = carchive::archive_read_new();
+        let archive_writer = carchive::archive_write_disk_new();
 
         let res = (|| {
             archive_result(
-                ffi::archive_read_support_filter_all(archive_reader),
+                carchive::archive_read_support_filter_all(archive_reader),
                 archive_reader,
             )?;
 
             archive_result(
-                ffi::archive_read_support_format_raw(archive_reader),
+                carchive::archive_read_support_format_raw(archive_reader),
                 archive_reader,
             )?;
 
             archive_result(
-                ffi::archive_read_set_seek_callback(archive_reader, Some(libarchive_seek_callback)),
+                carchive::archive_read_set_seek_callback(
+                    archive_reader,
+                    Some(libarchive_seek_callback),
+                ),
                 archive_reader,
             )?;
 
-            let mut writer_flags = ffi::ARCHIVE_EXTRACT_TIME
-                | ffi::ARCHIVE_EXTRACT_PERM
-                | ffi::ARCHIVE_EXTRACT_ACL
-                | ffi::ARCHIVE_EXTRACT_FFLAGS
-                | ffi::ARCHIVE_EXTRACT_XATTR;
+            let mut writer_flags = carchive::ARCHIVE_EXTRACT_TIME
+                | carchive::ARCHIVE_EXTRACT_PERM
+                | carchive::ARCHIVE_EXTRACT_ACL
+                | carchive::ARCHIVE_EXTRACT_FFLAGS
+                | carchive::ARCHIVE_EXTRACT_XATTR;
 
             if let Ownership::Preserve = ownership {
-                writer_flags |= ffi::ARCHIVE_EXTRACT_OWNER;
+                writer_flags |= carchive::ARCHIVE_EXTRACT_OWNER;
             };
 
             archive_result(
-                ffi::archive_write_disk_set_options(archive_writer, writer_flags as i32),
+                carchive::archive_write_disk_set_options(archive_writer, writer_flags as i32),
                 archive_writer,
             )?;
             archive_result(
-                ffi::archive_write_disk_set_standard_lookup(archive_writer),
+                carchive::archive_write_disk_set_standard_lookup(archive_writer),
                 archive_writer,
             )?;
             archive_result(
-                ffi::archive_read_support_format_all(archive_reader),
+                carchive::archive_read_support_format_all(archive_reader),
                 archive_reader,
             )?;
 
@@ -455,7 +465,7 @@ where
             };
 
             archive_result(
-                ffi::archive_read_open(
+                carchive::archive_read_open(
                     archive_reader,
                     std::ptr::addr_of_mut!(pipe) as *mut c_void,
                     None,
@@ -468,13 +478,16 @@ where
             f(archive_reader, archive_writer, archive_entry)
         })();
 
-        archive_result(ffi::archive_read_close(archive_reader), archive_reader)?;
-        archive_result(ffi::archive_read_free(archive_reader), archive_reader)?;
+        archive_result(carchive::archive_read_close(archive_reader), archive_reader)?;
+        archive_result(carchive::archive_read_free(archive_reader), archive_reader)?;
 
-        archive_result(ffi::archive_write_close(archive_writer), archive_writer)?;
-        archive_result(ffi::archive_write_free(archive_writer), archive_writer)?;
+        archive_result(
+            carchive::archive_write_close(archive_writer),
+            archive_writer,
+        )?;
+        archive_result(carchive::archive_write_free(archive_writer), archive_writer)?;
 
-        ffi::archive_entry_free(archive_entry);
+        carchive::archive_entry_free(archive_entry);
 
         res
     }
@@ -482,23 +495,27 @@ where
 
 fn run_with_unseekable_archive<F, R, T>(mut reader: R, f: F) -> Result<T>
 where
-    F: FnOnce(*mut ffi::archive, *mut ffi::archive, *mut ffi::archive_entry) -> Result<T>,
+    F: FnOnce(
+        *mut carchive::archive,
+        *mut carchive::archive,
+        *mut carchive::archive_entry,
+    ) -> Result<T>,
     R: Read,
 {
-    let _utf8_guard = ffi::UTF8LocaleGuard::new();
+    let _utf8_guard = carchive::UTF8LocaleGuard::new();
     unsafe {
-        let archive_entry: *mut ffi::archive_entry = std::ptr::null_mut();
-        let archive_reader = ffi::archive_read_new();
-        let archive_writer = ffi::archive_write_disk_new();
+        let archive_entry: *mut carchive::archive_entry = std::ptr::null_mut();
+        let archive_reader = carchive::archive_read_new();
+        let archive_writer = carchive::archive_write_disk_new();
 
         let res = (|| {
             archive_result(
-                ffi::archive_read_support_filter_all(archive_reader),
+                carchive::archive_read_support_filter_all(archive_reader),
                 archive_reader,
             )?;
 
             archive_result(
-                ffi::archive_read_support_format_raw(archive_reader),
+                carchive::archive_read_support_format_raw(archive_reader),
                 archive_reader,
             )?;
 
@@ -512,7 +529,7 @@ where
             };
 
             archive_result(
-                ffi::archive_read_open(
+                carchive::archive_read_open(
                     archive_reader,
                     std::ptr::addr_of_mut!(pipe) as *mut c_void,
                     None,
@@ -525,13 +542,16 @@ where
             f(archive_reader, archive_writer, archive_entry)
         })();
 
-        archive_result(ffi::archive_read_close(archive_reader), archive_reader)?;
-        archive_result(ffi::archive_read_free(archive_reader), archive_reader)?;
+        archive_result(carchive::archive_read_close(archive_reader), archive_reader)?;
+        archive_result(carchive::archive_read_free(archive_reader), archive_reader)?;
 
-        archive_result(ffi::archive_write_close(archive_writer), archive_writer)?;
-        archive_result(ffi::archive_write_free(archive_writer), archive_writer)?;
+        archive_result(
+            carchive::archive_write_close(archive_writer),
+            archive_writer,
+        )?;
+        archive_result(carchive::archive_write_free(archive_writer), archive_writer)?;
 
-        ffi::archive_entry_free(archive_entry);
+        carchive::archive_entry_free(archive_entry);
 
         res
     }
@@ -558,8 +578,8 @@ fn sanitize_destination_path(dest: &Path) -> Result<&Path> {
 }
 
 fn libarchive_copy_data(
-    archive_reader: *mut ffi::archive,
-    archive_writer: *mut ffi::archive,
+    archive_reader: *mut carchive::archive,
+    archive_writer: *mut carchive::archive,
 ) -> Result<()> {
     let mut buffer = std::ptr::null();
     let mut offset = 0;
@@ -567,9 +587,13 @@ fn libarchive_copy_data(
 
     unsafe {
         loop {
-            match ffi::archive_read_data_block(archive_reader, &mut buffer, &mut size, &mut offset)
-            {
-                ffi::ARCHIVE_EOF => return Ok(()),
+            match carchive::archive_read_data_block(
+                archive_reader,
+                &mut buffer,
+                &mut size,
+                &mut offset,
+            ) {
+                carchive::ARCHIVE_EOF => return Ok(()),
                 value => archive_result(value, archive_reader)?,
             }
 
@@ -577,7 +601,7 @@ fn libarchive_copy_data(
                 /* Might depending on the version of libarchive on success
                  * return 0 or the number of bytes written,
                  * see man:archive_write_data(3) */
-                match ffi::archive_write_data_block(archive_writer, buffer, size, offset) {
+                match carchive::archive_write_data_block(archive_writer, buffer, size, offset) {
                     x if x >= 0 => 0,
                     x => i32::try_from(x).unwrap(),
                 },
@@ -587,8 +611,8 @@ fn libarchive_copy_data(
     }
 }
 
-fn libarchive_entry_pathname<'a>(entry: *mut ffi::archive_entry) -> Result<&'a CStr> {
-    let pathname = unsafe { ffi::archive_entry_pathname(entry) };
+fn libarchive_entry_pathname<'a>(entry: *mut carchive::archive_entry) -> Result<&'a CStr> {
+    let pathname = unsafe { carchive::archive_entry_pathname(entry) };
     if pathname.is_null() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -601,7 +625,7 @@ fn libarchive_entry_pathname<'a>(entry: *mut ffi::archive_entry) -> Result<&'a C
 }
 
 unsafe fn libarchive_write_data_block<W>(
-    archive_reader: *mut ffi::archive,
+    archive_reader: *mut carchive::archive,
     mut target: W,
 ) -> Result<usize>
 where
@@ -613,8 +637,9 @@ where
     let mut written = 0;
 
     loop {
-        match ffi::archive_read_data_block(archive_reader, &mut buffer, &mut size, &mut offset) {
-            ffi::ARCHIVE_EOF => return Ok(written),
+        match carchive::archive_read_data_block(archive_reader, &mut buffer, &mut size, &mut offset)
+        {
+            carchive::ARCHIVE_EOF => return Ok(written),
             value => archive_result(value, archive_reader)?,
         }
 
@@ -625,9 +650,9 @@ where
 }
 
 unsafe extern "C" fn libarchive_seek_callback(
-    _: *mut ffi::archive,
+    _: *mut carchive::archive,
     client_data: *mut c_void,
-    offset: ffi::la_int64_t,
+    offset: carchive::la_int64_t,
     whence: c_int,
 ) -> i64 {
     let pipe = (client_data as *mut SeekableReaderPipe).as_mut().unwrap();
@@ -645,20 +670,24 @@ unsafe extern "C" fn libarchive_seek_callback(
 }
 
 unsafe extern "C" fn libarchive_seekable_read_callback(
-    archive: *mut ffi::archive,
+    archive: *mut carchive::archive,
     client_data: *mut c_void,
     buffer: *mut *const c_void,
-) -> ffi::la_ssize_t {
+) -> carchive::la_ssize_t {
     let pipe = (client_data as *mut SeekableReaderPipe).as_mut().unwrap();
 
     *buffer = pipe.buffer.as_ptr() as *const c_void;
 
     match pipe.reader.read(pipe.buffer) {
-        Ok(size) => size as ffi::la_ssize_t,
+        Ok(size) => size as carchive::la_ssize_t,
         Err(e) => {
             let description = CString::new(e.to_string()).unwrap();
 
-            ffi::archive_set_error(archive, e.raw_os_error().unwrap_or(0), description.as_ptr());
+            carchive::archive_set_error(
+                archive,
+                e.raw_os_error().unwrap_or(0),
+                description.as_ptr(),
+            );
 
             -1
         }
@@ -666,20 +695,24 @@ unsafe extern "C" fn libarchive_seekable_read_callback(
 }
 
 unsafe extern "C" fn libarchive_read_callback(
-    archive: *mut ffi::archive,
+    archive: *mut carchive::archive,
     client_data: *mut c_void,
     buffer: *mut *const c_void,
-) -> ffi::la_ssize_t {
+) -> carchive::la_ssize_t {
     let pipe = (client_data as *mut ReaderPipe).as_mut().unwrap();
 
     *buffer = pipe.buffer.as_ptr() as *const c_void;
 
     match pipe.reader.read(pipe.buffer) {
-        Ok(size) => size as ffi::la_ssize_t,
+        Ok(size) => size as carchive::la_ssize_t,
         Err(e) => {
             let description = CString::new(e.to_string()).unwrap();
 
-            ffi::archive_set_error(archive, e.raw_os_error().unwrap_or(0), description.as_ptr());
+            carchive::archive_set_error(
+                archive,
+                e.raw_os_error().unwrap_or(0),
+                description.as_ptr(),
+            );
 
             -1
         }

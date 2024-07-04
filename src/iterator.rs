@@ -1,13 +1,13 @@
 use std::{
     ffi::{CStr, CString},
-    io::{self, Read, Seek, SeekFrom, Write},
-    slice, usize,
+    io::{ Read, Seek, SeekFrom, Write},
+    slice,
 };
 
 use libc::{c_int, c_void};
 
 use crate::{
-    error::archive_result, ffi, ffi::UTF8LocaleGuard, DecodeCallback, Error, Result,
+    carchive, carchive::UTF8LocaleGuard, error::archive_result, DecodeCallback, Error, Result,
     READER_BUFFER_SIZE,
 };
 
@@ -47,8 +47,8 @@ pub type EntryFilterCallbackFn = dyn Fn(&str, &libc::stat) -> bool;
 /// An iterator over the contents of an archive.
 #[allow(clippy::module_name_repetitions)]
 pub struct ArchiveIterator<R: Read + Seek> {
-    archive_entry: *mut ffi::archive_entry,
-    archive_reader: *mut ffi::archive,
+    archive_entry: *mut carchive::archive_entry,
+    archive_reader: *mut carchive::archive,
 
     decode: DecodeCallback,
     in_file: bool,
@@ -123,28 +123,28 @@ impl<R: Read + Seek> ArchiveIterator<R> {
     where
         R: Read + Seek,
     {
-        let utf8_guard = ffi::UTF8LocaleGuard::new();
+        let utf8_guard = carchive::UTF8LocaleGuard::new();
         let reader = source;
         let buffer = [0; READER_BUFFER_SIZE];
         let mut pipe = Box::new(HeapReadSeekerPipe { reader, buffer });
 
         unsafe {
-            let archive_entry: *mut ffi::archive_entry = std::ptr::null_mut();
-            let archive_reader = ffi::archive_read_new();
+            let archive_entry: *mut carchive::archive_entry = std::ptr::null_mut();
+            let archive_reader = carchive::archive_read_new();
 
             let res = (|| {
                 archive_result(
-                    ffi::archive_read_support_filter_all(archive_reader),
+                    carchive::archive_read_support_filter_all(archive_reader),
                     archive_reader,
                 )?;
 
                 archive_result(
-                    ffi::archive_read_support_format_raw(archive_reader),
+                    carchive::archive_read_support_format_raw(archive_reader),
                     archive_reader,
                 )?;
 
                 archive_result(
-                    ffi::archive_read_set_seek_callback(
+                    carchive::archive_read_set_seek_callback(
                         archive_reader,
                         Some(libarchive_heap_seek_callback::<R>),
                     ),
@@ -156,12 +156,12 @@ impl<R: Read + Seek> ArchiveIterator<R> {
                 }
 
                 archive_result(
-                    ffi::archive_read_support_format_all(archive_reader),
+                    carchive::archive_read_support_format_all(archive_reader),
                     archive_reader,
                 )?;
 
                 archive_result(
-                    ffi::archive_read_open(
+                    carchive::archive_read_open(
                         archive_reader,
                         std::ptr::addr_of_mut!(*pipe) as *mut c_void,
                         None,
@@ -288,11 +288,11 @@ impl<R: Read + Seek> ArchiveIterator<R> {
         self.closed = true;
         unsafe {
             archive_result(
-                ffi::archive_read_close(self.archive_reader),
+                carchive::archive_read_close(self.archive_reader),
                 self.archive_reader,
             )?;
             archive_result(
-                ffi::archive_read_free(self.archive_reader),
+                carchive::archive_read_free(self.archive_reader),
                 self.archive_reader,
             )?;
         }
@@ -300,16 +300,16 @@ impl<R: Read + Seek> ArchiveIterator<R> {
     }
 
     unsafe fn next_header(&mut self) -> ArchiveContents {
-        match ffi::archive_read_next_header(self.archive_reader, &mut self.archive_entry) {
-            ffi::ARCHIVE_EOF => ArchiveContents::EndOfEntry,
-            ffi::ARCHIVE_OK | ffi::ARCHIVE_WARN => {
-                let _utf8_guard = ffi::WindowsUTF8LocaleGuard::new();
-                let cstr = CStr::from_ptr(ffi::archive_entry_pathname(self.archive_entry));
+        match carchive::archive_read_next_header(self.archive_reader, &mut self.archive_entry) {
+            carchive::ARCHIVE_EOF => ArchiveContents::EndOfEntry,
+            carchive::ARCHIVE_OK | carchive::ARCHIVE_WARN => {
+                let _utf8_guard = carchive::WindowsUTF8LocaleGuard::new();
+                let cstr = CStr::from_ptr(carchive::archive_entry_pathname(self.archive_entry));
                 let file_name = match (self.decode)(cstr.to_bytes()) {
                     Ok(f) => f,
                     Err(e) => return ArchiveContents::Err(e),
                 };
-                let stat = *ffi::archive_entry_stat(self.archive_entry);
+                let stat = *carchive::archive_entry_stat(self.archive_entry);
                 ArchiveContents::StartOfEntry(file_name, stat)
             }
             _ => ArchiveContents::Err(Error::from(self.archive_reader)),
@@ -322,11 +322,14 @@ impl<R: Read + Seek> ArchiveIterator<R> {
         let mut size = 0;
         let mut target = Vec::with_capacity(READER_BUFFER_SIZE);
 
-        println!("PASANDO POR DATA CHUNK");
-        match ffi::archive_read_data_block(self.archive_reader, &mut buffer, &mut size, &mut offset)
-        {
-            ffi::ARCHIVE_EOF => ArchiveContents::EndOfEntry,
-            ffi::ARCHIVE_OK | ffi::ARCHIVE_WARN => {
+        match carchive::archive_read_data_block(
+            self.archive_reader,
+            &mut buffer,
+            &mut size,
+            &mut offset,
+        ) {
+            carchive::ARCHIVE_EOF => ArchiveContents::EndOfEntry,
+            carchive::ARCHIVE_OK | carchive::ARCHIVE_WARN => {
                 if size > 0 {
                     // fixes: (as buffer is null then) unsafe precondition(s) violated:
                     // slice::from_raw_parts requires the pointer to be aligned and non-null, and
@@ -348,9 +351,9 @@ impl<R: Read + Seek> ArchiveIterator<R> {
 }
 
 unsafe extern "C" fn libarchive_heap_seek_callback<R: Read + Seek>(
-    _: *mut ffi::archive,
+    _: *mut carchive::archive,
     client_data: *mut c_void,
-    offset: ffi::la_int64_t,
+    offset: carchive::la_int64_t,
     whence: c_int,
 ) -> i64 {
     let pipe = (client_data as *mut HeapReadSeekerPipe<R>)
@@ -370,10 +373,10 @@ unsafe extern "C" fn libarchive_heap_seek_callback<R: Read + Seek>(
 }
 
 unsafe extern "C" fn libarchive_heap_seekableread_callback<R: Read + Seek>(
-    archive: *mut ffi::archive,
+    archive: *mut carchive::archive,
     client_data: *mut c_void,
     buffer: *mut *const c_void,
-) -> ffi::la_ssize_t {
+) -> carchive::la_ssize_t {
     let pipe = (client_data as *mut HeapReadSeekerPipe<R>)
         .as_mut()
         .unwrap();
@@ -381,11 +384,15 @@ unsafe extern "C" fn libarchive_heap_seekableread_callback<R: Read + Seek>(
     *buffer = pipe.buffer.as_ptr() as *const c_void;
 
     match pipe.reader.read(&mut pipe.buffer) {
-        Ok(size) => size as ffi::la_ssize_t,
+        Ok(size) => size as carchive::la_ssize_t,
         Err(e) => {
             let description = CString::new(e.to_string()).unwrap();
 
-            ffi::archive_set_error(archive, e.raw_os_error().unwrap_or(0), description.as_ptr());
+            carchive::archive_set_error(
+                archive,
+                e.raw_os_error().unwrap_or(0),
+                description.as_ptr(),
+            );
 
             -1
         }

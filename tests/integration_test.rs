@@ -3,11 +3,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use compress_tools::*;
-use libc::{printf, S_IFREG}; use std::{
+use libc::S_IFREG;
+use std::{
     ffi::OsStr,
+    fs::File,
     io::{Cursor, ErrorKind, Read},
     path::Path,
 };
+use writer::ArchiveWriter;
 
 #[test]
 fn get_compressed_file_content() {
@@ -804,4 +807,13 @@ fn iterate_archive_with_filter_path() {
         vec!["tree/branch2/".to_string(), "tree/branch2/leaf".to_string(),],
         "filtered file list inside the archive did not match"
     );
+}
+
+#[test]
+fn compress_archive() {
+    let dest = File::create("/tmp/test").unwrap();
+    let mut a = ArchiveWriter::new(dest, 917504, 6).unwrap();
+    a.add_file("tests/fixtures/tree.tar", "test/fixtures/output.xz")
+        .unwrap();
+    // a.free().unwrap();
 }

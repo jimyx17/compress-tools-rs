@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::ffi;
+use crate::carchive;
 use derive_more::{Display, Error, From};
 use std::{borrow::Cow, ffi::CStr, io};
 
@@ -31,25 +31,25 @@ pub enum Error {
     Unknown,
 }
 
-pub(crate) fn archive_result(value: i32, archive: *mut ffi::archive) -> Result<()> {
+pub(crate) fn archive_result(value: i32, archive: *mut carchive::archive) -> Result<()> {
     match value {
-        ffi::ARCHIVE_OK | ffi::ARCHIVE_WARN => Ok(()),
+        carchive::ARCHIVE_OK | carchive::ARCHIVE_WARN => Ok(()),
         _ => Err(Error::from(archive)),
     }
 }
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-impl From<*mut ffi::archive> for Error {
-    fn from(input: *mut ffi::archive) -> Self {
+impl From<*mut carchive::archive> for Error {
+    fn from(input: *mut carchive::archive) -> Self {
         unsafe {
-            let error_string = ffi::archive_error_string(input);
+            let error_string = carchive::archive_error_string(input);
             if !error_string.is_null() {
                 return Error::Extraction(
                     CStr::from_ptr(error_string).to_string_lossy().to_string(),
                 );
             }
 
-            let errno = ffi::archive_errno(input);
+            let errno = carchive::archive_errno(input);
             if errno != 0 {
                 return io::Error::from_raw_os_error(errno).into();
             }

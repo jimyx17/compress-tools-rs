@@ -22,10 +22,21 @@ EOF
 
 bindgen \
     \
+    --raw-line "#![allow(dead_code)]" \
     --raw-line "#![allow(non_camel_case_types)]" \
+    --raw-line "#![allow(non_snake_case)]" \
     --raw-line "use libc::stat;" \
     --raw-line "pub const ARCHIVE_EOF: i32 = 1;" \
     --raw-line "pub const ARCHIVE_OK: i32 = 0;" \
+    \
+    --raw-line "pub const AE_IFMT: u32 = 0o170000;" \
+    --raw-line "pub const AE_IFREG: u32 = 0o100000;" \
+    --raw-line "pub const AE_IFLNK: u32 = 0o120000;" \
+    --raw-line "pub const AE_IFSOCK: u32 = 0o140000;" \
+    --raw-line "pub const AE_IFCHR: u32 = 0o020000;" \
+    --raw-line "pub const AE_IFBLK: u32 = 0o060000;" \
+    --raw-line "pub const AE_IFDIR: u32 = 0o040000;" \
+    --raw-line "pub const AE_IFIFO: u32 = 0o010000;" \
     \
     --allowlist-var "ARCHIVE_RETRY" \
     --allowlist-var "ARCHIVE_WARN" \
@@ -54,8 +65,6 @@ bindgen \
     --allowlist-var "ARCHIVE_EXTRACT_PERM" \
     --allowlist-var "ARCHIVE_EXTRACT_ACL" \
     --allowlist-var "ARCHIVE_EXTRACT_FFLAGS" \
-    --allowlist-var "ARCHIVE_VERSION_ONLY_STRING" \
-    --allowlist-var "ARCHIVE_VERSION_STRING" \
     --allowlist-var "ARCHIVE_FILTER_NONE" \
     --allowlist-var "ARCHIVE_FILTER_GZIP" \
     --allowlist-var "ARCHIVE_FILTER_BZIP2" \
@@ -122,14 +131,6 @@ bindgen \
     --allowlist-var "ARCHIVE_MATCH_NEWER" \
     --allowlist-var "ARCHIVE_MATCH_OLDER" \
     --allowlist-var "ARCHIVE_MATCH_EQUAL" \
-    --allowlist-var "AE_IFMT" \
-    --allowlist-var "AE_IFREG" \
-    --allowlist-var "AE_IFLNK" \
-    --allowlist-var "AE_IFSOCK" \
-    --allowlist-var "AE_IFCHR" \
-    --allowlist-var "AE_IFBLK" \
-    --allowlist-var "AE_IFDIR" \
-    --allowlist-var "AE_IFIFO" \
     --allowlist-var "AE_SYMLINK_TYPE_UNDEFINED" \
     --allowlist-var "AE_SYMLINK_TYPE_FILE" \
     --allowlist-var "AE_SYMLINK_TYPE_DIRECTORY" \
@@ -590,9 +591,9 @@ bindgen \
     --allowlist-function "archive_entry_linkify" \
     --allowlist-function "archive_entry_partial_links" \
     \
-    --output $basedir/src/ffi/generated.rs \
+    --output $basedir/src/carchive/generated.rs \
     \
     $basedir/wrapper.h
 
-sed -i 's,pub ,pub(crate) ,g' $basedir/src/ffi/generated.rs
+sed -i 's,pub ,pub(crate) ,g' $basedir/src/carchive/generated.rs
 cargo fmt --all
