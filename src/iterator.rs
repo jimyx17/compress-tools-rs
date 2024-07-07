@@ -1,6 +1,6 @@
 use std::{
     ffi::{CStr, CString},
-    io::{ Read, Seek, SeekFrom, Write},
+    io::{Read, Seek, SeekFrom, Write},
     slice,
 };
 

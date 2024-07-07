@@ -4,3 +4,4 @@
 Cargo.lock
 /.idea
 /.direnv/
+/tests/fixtures_out/*

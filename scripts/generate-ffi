@@ -26,8 +26,12 @@ bindgen \
     --raw-line "#![allow(non_camel_case_types)]" \
     --raw-line "#![allow(non_snake_case)]" \
     --raw-line "use libc::stat;" \
-    --raw-line "pub const ARCHIVE_EOF: i32 = 1;" \
-    --raw-line "pub const ARCHIVE_OK: i32 = 0;" \
+    --allowlist-var "ARCHIVE_OK" \
+    --allowlist-var "ARCHIVE_EOF" \
+    --allowlist-var "ARCHIVE_RETRY" \
+    --allowlist-var "ARCHIVE_WARN" \
+    --allowlist-var "ARCHIVE_FAILED" \
+    --allowlist-var "ARCHIVE_FATAL" \
     \
     --raw-line "pub const AE_IFMT: u32 = 0o170000;" \
     --raw-line "pub const AE_IFREG: u32 = 0o100000;" \
@@ -37,11 +41,6 @@ bindgen \
     --raw-line "pub const AE_IFBLK: u32 = 0o060000;" \
     --raw-line "pub const AE_IFDIR: u32 = 0o040000;" \
     --raw-line "pub const AE_IFIFO: u32 = 0o010000;" \
-    \
-    --allowlist-var "ARCHIVE_RETRY" \
-    --allowlist-var "ARCHIVE_WARN" \
-    --allowlist-var "ARCHIVE_FAILED" \
-    --allowlist-var "ARCHIVE_FATAL" \
     \
     --allowlist-var "ARCHIVE_EXTRACT_TIME" \
     --allowlist-var "ARCHIVE_EXTRACT_OWNER" \
@@ -590,10 +589,12 @@ bindgen \
     --allowlist-function "archive_entry_linkresolver_free" \
     --allowlist-function "archive_entry_linkify" \
     --allowlist-function "archive_entry_partial_links" \
+    --blocklist-type "stat" \
+    --blacklist-type "timespec" \
     \
     --output $basedir/src/carchive/generated.rs \
     \
     $basedir/wrapper.h
 
-sed -i 's,pub ,pub(crate) ,g' $basedir/src/carchive/generated.rs
+# sed -i 's,pub ,pub(crate) ,g' $basedir/src/carchive/generated.rs
 cargo fmt --all

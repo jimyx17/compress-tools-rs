@@ -5,5 +5,5 @@
 mod generated;
 mod locale;
 
-pub(crate) use generated::*;
+pub use generated::*;
 pub(crate) use locale::{UTF8LocaleGuard, WindowsUTF8LocaleGuard};

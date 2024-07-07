@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use compress_tools::*;
-use libc::S_IFREG;
 use std::{
     ffi::OsStr,
     fs::File,
@@ -767,7 +766,7 @@ fn iterate_archive_with_filter_type() {
         .filter(|_name, stat| {
             /* Use explicit casts to achieve windows portability,
              * see https://github.com/rust-lang/libc/issues/3161 */
-            (stat.st_mode as u32 & libc::S_IFMT as u32) == S_IFREG as u32
+            (stat.st_mode as u32 & libc::S_IFMT as u32) == AE_IFREG as u32
         })
         .build()
         .unwrap()
@@ -811,9 +810,7 @@ fn iterate_archive_with_filter_path() {
 
 #[test]
 fn compress_archive() {
-    let dest = File::create("/tmp/test").unwrap();
-    let mut a = ArchiveWriter::new(dest, 917504, 6).unwrap();
-    a.add_file("tests/fixtures/tree.tar", "test/fixtures/output.xz")
-        .unwrap();
-    // a.free().unwrap();
+    let dest = File::create("tests/fixtures_out/compressed.tar").unwrap();
+    let mut a = ArchiveWriter::new(dest, ARCHIVE_FORMAT_RAR, ARCHIVE_FILTER_NONE).unwrap();
+    a.add_file("tests/fixtures/tree.tar", "E/output.xz").unwrap();
 }
