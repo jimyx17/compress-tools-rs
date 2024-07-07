@@ -1,5 +1,5 @@
 use std::{
-    ffi::{CStr, CString},
+    ffi::CString,
     fs::File,
     io::{Read, Write},
     os::unix::fs::MetadataExt,
@@ -10,7 +10,10 @@ use libc::{c_char, c_void};
 
 use crate::{
     carchive::{
-        self, archive, archive_entry_free, archive_entry_new, archive_entry_set_atime, archive_entry_set_ctime, archive_entry_set_mode, archive_entry_set_mtime, archive_entry_set_pathname, archive_entry_set_perm, archive_entry_set_size, archive_write_data, archive_write_free, archive_write_header, AE_IFREG, ARCHIVE_OK
+        self, archive, archive_entry_free, archive_entry_new, archive_entry_set_atime,
+        archive_entry_set_ctime, archive_entry_set_mode, archive_entry_set_mtime,
+        archive_entry_set_pathname, archive_entry_set_perm, archive_entry_set_size,
+        archive_write_data, archive_write_free, archive_write_header, AE_IFREG,
     },
     error::archive_result,
     Error, Result,
@@ -28,34 +31,28 @@ struct FileWriter<R: Write> {
     obj: R,
 }
 
-// fn localfile_read_callback(_file_obj: *mut c_void) -> Result<()> {
-//     Ok(())
-// }
-//
-
-unsafe extern "C" fn archivewriter_opener<R: Write>(
-    _archive: *mut carchive::archive,
-    _client_data: *mut c_void,
-) -> c_int {
-    ARCHIVE_OK
-}
 
 unsafe extern "C" fn archivewriter_writer<R: Write>(
-    _archive: *mut carchive::archive,
+    archive: *mut carchive::archive,
     client_data: *mut c_void,
     _buffer: *const c_void,
     size: usize,
 ) -> carchive::la_ssize_t {
     let writer = (client_data as *mut FileWriter<R>).as_mut().unwrap();
     let writable = std::slice::from_raw_parts(_buffer as *const u8, size);
-    writer.obj.write(writable).unwrap() as isize
-}
-
-unsafe extern "C" fn archivewriter_freer<R: Write>(
-    _archive: *mut carchive::archive,
-    _client_data: *mut c_void,
-) -> c_int {
-    ARCHIVE_OK
+    // writer.obj.write(writable).unwrap() as isize
+    match writer.obj.write(writable) {
+        Ok(size) => size as carchive::la_ssize_t,
+        Err(e) => {
+            let description = CString::new(e.to_string()).unwrap();
+            carchive::archive_set_error(
+                archive,
+                e.raw_os_error().unwrap_or(0),
+                description.as_ptr(),
+            );
+            -1
+        }
+    }
 }
 
 impl<R: Write> ArchiveWriter<R> {
@@ -85,9 +82,9 @@ impl<R: Write> ArchiveWriter<R> {
                 carchive::archive_write_open(
                     archive_writer,
                     std::ptr::addr_of_mut!(*fref) as *mut c_void,
-                    Some(archivewriter_opener::<R>),
+                    None,
                     Some(archivewriter_writer::<R>),
-                    Some(archivewriter_freer::<R>),
+                    None,
                 ),
                 archive_writer,
             )?;
