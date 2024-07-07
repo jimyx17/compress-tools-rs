@@ -443,7 +443,7 @@ where
             };
 
             archive_result(
-                carchive::archive_write_disk_set_options(archive_writer, writer_flags as i32),
+                carchive::archive_write_disk_set_options(archive_writer, writer_flags),
                 archive_writer,
             )?;
             archive_result(
