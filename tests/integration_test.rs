@@ -811,6 +811,8 @@ fn iterate_archive_with_filter_path() {
 #[test]
 fn compress_archive() {
     let dest = File::create("tests/fixtures_out/compressed.tar").unwrap();
-    let mut a = ArchiveWriter::new(dest, ARCHIVE_FORMAT_RAR, ARCHIVE_FILTER_NONE).unwrap();
+    let mut a = ArchiveWriter::new(dest, ARCHIVE_FORMAT_7ZIP, ARCHIVE_FILTER_ZSTD).unwrap();
+    a.set_compression_high().unwrap();
+    a.open().unwrap(); 
     a.add_file("tests/fixtures/tree.tar", "E/output.xz").unwrap();
 }

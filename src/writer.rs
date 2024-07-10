@@ -1,22 +1,24 @@
 use std::{
     ffi::CString,
-    fs::File,
+    fs::{File, Metadata as FSMeta},
     io::{Read, Write},
     os::unix::fs::MetadataExt,
     ptr::null_mut,
 };
 
-use libc::{c_char, c_void};
+use libc::c_void;
 
 use crate::{
     carchive::{
         self, archive, archive_entry_free, archive_entry_new, archive_entry_set_atime,
         archive_entry_set_ctime, archive_entry_set_mode, archive_entry_set_mtime,
         archive_entry_set_pathname, archive_entry_set_perm, archive_entry_set_size,
-        archive_write_data, archive_write_free, archive_write_header, AE_IFREG,
+        archive_write_data, archive_write_free, archive_write_header, mode_t, AE_IFREG,
     },
     error::archive_result,
-    Error, Result,
+    Error, Result, AE_IFDIR, AE_IFLNK, ARCHIVE_FILTER_BZIP2, ARCHIVE_FILTER_GZIP,
+    ARCHIVE_FILTER_LRZIP, ARCHIVE_FILTER_LZ4, ARCHIVE_FILTER_LZIP, ARCHIVE_FILTER_LZMA,
+    ARCHIVE_FILTER_LZOP, ARCHIVE_FILTER_XZ, ARCHIVE_FILTER_ZSTD,
 };
 use std::os::raw::c_int;
 
@@ -24,13 +26,55 @@ const BUFFER_SIZE: usize = 16384;
 
 pub struct ArchiveWriter<R: Write> {
     archive_writer: *mut archive,
-    _fileref: Box<FileWriter<R>>,
+    fileref: Box<FileWriter<R>>,
+    file_format: c_int,
+    file_filter: c_int,
 }
 
 struct FileWriter<R: Write> {
     obj: R,
 }
 
+pub struct Metadata {
+    size: i64,
+    nodetype: u32,
+    perm: mode_t,
+    ctime: i64,
+    ctime_nano: i64,
+    atime: i64,
+    atime_nano: i64,
+    mtime: i64,
+    mtime_nano: i64,
+}
+
+fn into_nodetype(source: &FSMeta) -> u32 {
+    if source.is_dir() {
+        AE_IFDIR
+    } else if source.is_file() {
+        AE_IFREG
+    } else if source.is_symlink() {
+        AE_IFLNK
+    } else {
+        0
+    }
+}
+
+impl From<FSMeta> for Metadata {
+    fn from(meta: FSMeta) -> Self {
+        Metadata {
+            size: meta.size() as i64, // Iḿ assuming anything above 2**63 is way to much for
+            // a single file
+            nodetype: into_nodetype(&meta),
+            perm: meta.mode(),
+            ctime: meta.ctime(),
+            ctime_nano: meta.ctime_nsec(),
+            atime: meta.atime(),
+            atime_nano: meta.atime_nsec(),
+            mtime: meta.mtime(),
+            mtime_nano: meta.mtime_nsec(),
+        }
+    }
+}
 
 unsafe extern "C" fn archivewriter_writer<R: Write>(
     archive: *mut carchive::archive,
@@ -40,7 +84,6 @@ unsafe extern "C" fn archivewriter_writer<R: Write>(
 ) -> carchive::la_ssize_t {
     let writer = (client_data as *mut FileWriter<R>).as_mut().unwrap();
     let writable = std::slice::from_raw_parts(_buffer as *const u8, size);
-    // writer.obj.write(writable).unwrap() as isize
     match writer.obj.write(writable) {
         Ok(size) => size as carchive::la_ssize_t,
         Err(e) => {
@@ -60,7 +103,7 @@ impl<R: Write> ArchiveWriter<R> {
     where
         R: Write,
     {
-        let mut fref = Box::new(FileWriter { obj: dest });
+        let fref = Box::new(FileWriter { obj: dest });
         unsafe {
             let archive_writer = carchive::archive_write_new();
 
@@ -78,22 +121,29 @@ impl<R: Write> ArchiveWriter<R> {
                 archive_writer,
             )?;
 
+            Ok(ArchiveWriter {
+                archive_writer,
+                fileref: fref,
+                file_format: format,
+                file_filter: filter,
+            })
+        }
+    }
+
+    pub fn open(&mut self) -> Result<()> {
+        unsafe {
             archive_result(
                 carchive::archive_write_open(
-                    archive_writer,
-                    std::ptr::addr_of_mut!(*fref) as *mut c_void,
+                    self.archive_writer,
+                    std::ptr::addr_of_mut!(*self.fileref) as *mut c_void,
                     None,
                     Some(archivewriter_writer::<R>),
                     None,
                 ),
-                archive_writer,
+                self.archive_writer,
             )?;
-
-            Ok(ArchiveWriter {
-                archive_writer,
-                _fileref: fref,
-            })
         }
+        Ok(())
     }
 
     pub fn free(&mut self) -> Result<()> {
@@ -104,13 +154,15 @@ impl<R: Write> ArchiveWriter<R> {
     }
 
     pub fn add_compression_option(&mut self, name: &str, value: &str) -> Result<()> {
+        let n = CString::new(name.to_string()).unwrap();
+        let v = CString::new(value.to_string()).unwrap();
         unsafe {
             archive_result(
                 carchive::archive_write_set_filter_option(
                     self.archive_writer,
                     null_mut(),
-                    name.as_ptr() as *const c_char,
-                    value.as_ptr() as *const c_char,
+                    n.as_ptr(),
+                    v.as_ptr(),
                 ),
                 self.archive_writer,
             )?;
@@ -118,25 +170,74 @@ impl<R: Write> ArchiveWriter<R> {
         Ok(())
     }
 
-    pub fn add_file(&mut self, localpath: &str, archivepath: &str) -> Result<()> {
-        let mut source = File::open(localpath)?;
-        let meta = source.metadata()?;
-        let size = meta.len();
-        let p = CString::new(archivepath.to_string()).expect("no funciona");
+    pub fn set_compression_high(&mut self) -> Result<()> {
+        let max_compression_level = match self.file_filter {
+            ARCHIVE_FILTER_BZIP2 => 9,
+            ARCHIVE_FILTER_GZIP => 9,
+            ARCHIVE_FILTER_LRZIP => 9,
+            ARCHIVE_FILTER_XZ => 9,
+            ARCHIVE_FILTER_LZ4 => 9,
+            ARCHIVE_FILTER_LZIP => 9,
+            ARCHIVE_FILTER_ZSTD => 22,
+            ARCHIVE_FILTER_LZMA => 9,
+            ARCHIVE_FILTER_LZOP => 9,
+            _ => return Err(Error::Unknown),
+        };
+        self.add_compression_option("compression-level", &max_compression_level.to_string())
+    }
+
+    pub fn set_compression_mid(&mut self) -> Result<()> {
+        let max_compression_level = match self.file_filter {
+            ARCHIVE_FILTER_BZIP2 => 9,
+            ARCHIVE_FILTER_GZIP => 9,
+            ARCHIVE_FILTER_LRZIP => 9,
+            ARCHIVE_FILTER_XZ => 9,
+            ARCHIVE_FILTER_LZ4 => 9,
+            ARCHIVE_FILTER_LZIP => 9,
+            ARCHIVE_FILTER_ZSTD => 22,
+            ARCHIVE_FILTER_LZMA => 9,
+            ARCHIVE_FILTER_LZOP => 9,
+            _ => return Err(Error::Unknown),
+        };
+        self.add_compression_option("compression-level", &(max_compression_level/2).to_string())
+    }
+
+    pub fn set_compression_low(&mut self) -> Result<()> {
+        let max_compression_level = match self.file_filter {
+            ARCHIVE_FILTER_BZIP2 => 0,
+            ARCHIVE_FILTER_GZIP => 0,
+            ARCHIVE_FILTER_LRZIP => 0,
+            ARCHIVE_FILTER_XZ => 0,
+            ARCHIVE_FILTER_LZ4 => 0,
+            ARCHIVE_FILTER_LZIP => 0,
+            ARCHIVE_FILTER_ZSTD => 0,
+            ARCHIVE_FILTER_LZMA => 0,
+            ARCHIVE_FILTER_LZOP => 0,
+            _ => return Err(Error::Unknown),
+        };
+        self.add_compression_option("compression-level", &max_compression_level.to_string())
+    }
+
+    pub fn add_obj_from_reader<S: Read>(
+        &mut self,
+        mut source: S,
+        archivepath: &str,
+        objmeta: &Metadata,
+    ) -> Result<()> {
+        let mut buffer: [u8; BUFFER_SIZE] = [0u8; BUFFER_SIZE];
+        let p = CString::new(archivepath.to_string()).unwrap();
 
         unsafe {
-            let mut readed: usize;
-            let mut buffer: [u8; BUFFER_SIZE] = [0u8; BUFFER_SIZE];
             let entry = archive_entry_new();
 
-            archive_entry_set_size(entry, size as i64); // quick way to get the size?
-                                                        // archive_entry_set_perm(entry, 0o777);
-                                                        // archive_entry_set_filetype(entry, AE_IFREG);
-            archive_entry_set_mode(entry, AE_IFREG | 0o755);
-            archive_entry_set_perm(entry, 0o755);
-            archive_entry_set_ctime(entry, meta.ctime(), meta.ctime_nsec());
-            archive_entry_set_mtime(entry, meta.mtime(), meta.mtime_nsec());
-            archive_entry_set_atime(entry, meta.atime(), meta.atime_nsec());
+            archive_entry_set_size(entry, objmeta.size); // quick way to get the size?
+                                                         // archive_entry_set_perm(entry, 0o777);
+                                                         // archive_entry_set_filetype(entry, AE_IFREG);
+            archive_entry_set_mode(entry, objmeta.nodetype | objmeta.perm);
+            archive_entry_set_perm(entry, objmeta.perm);
+            archive_entry_set_ctime(entry, objmeta.ctime, objmeta.ctime_nano);
+            archive_entry_set_mtime(entry, objmeta.mtime, objmeta.mtime_nano);
+            archive_entry_set_atime(entry, objmeta.atime, objmeta.atime_nano);
             archive_entry_set_pathname(entry, p.as_ptr());
 
             archive_result(
@@ -145,12 +246,11 @@ impl<R: Write> ArchiveWriter<R> {
             )?;
 
             loop {
-                readed = source.read(&mut buffer)?;
+                let readed = source.read(&mut buffer)?;
                 if readed == 0 {
                     break;
                 }
 
-                println!("Readed: {readed}");
                 if archive_write_data(
                     self.archive_writer,
                     buffer.as_ptr() as *const c_void,
@@ -165,6 +265,12 @@ impl<R: Write> ArchiveWriter<R> {
             archive_entry_free(entry);
         }
         Ok(())
+    }
+
+    pub fn add_file(&mut self, localpath: &str, archivepath: &str) -> Result<()> {
+        let source = File::open(localpath)?;
+        let meta = source.metadata()?;
+        self.add_obj_from_reader(source, archivepath, &meta.into())
     }
 }
 
