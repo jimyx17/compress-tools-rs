@@ -329,7 +329,7 @@ impl<R: Read + Seek> ArchiveIterator<R> {
         Ok(())
     }
 
-    unsafe fn next_header(&mut self) -> ArchiveContents {
+    unsafe fn unsafe_next_header(&mut self) -> ArchiveContents {
         match carchive::archive_read_next_header(self.archive_reader, &mut self.archive_entry) {
             carchive::ARCHIVE_EOF => ArchiveContents::EndOfEntry,
             carchive::ARCHIVE_OK | carchive::ARCHIVE_WARN => {
