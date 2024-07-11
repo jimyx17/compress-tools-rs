@@ -27,6 +27,15 @@ pub enum Error {
     #[display(fmt = "Error to create the archive struct, is null")]
     NullArchive,
 
+    #[display(fmt = "Archive has been allocated but no filter nor format has been defined")]
+    IncompleteInitialization,
+
+    #[display(fmt = "Unknown filter")]
+    UnknownFilter,
+
+    #[display(fmt = "Unknown format")]
+    UnknownFormat,
+
     #[display(fmt = "Unknown error")]
     Unknown,
 }
