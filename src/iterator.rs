@@ -74,7 +74,7 @@ impl<R: Read + Seek> Iterator for ArchiveIterator<R> {
             let next = if self.in_file {
                 unsafe { self.next_data_chunk() }
             } else {
-                unsafe { self.next_header() }
+                unsafe { self.unsafe_next_header() }
             };
 
             match &next {
@@ -104,6 +104,36 @@ impl<R: Read + Seek> Iterator for ArchiveIterator<R> {
                     break Some(next);
                 }
             }
+        }
+    }
+}
+
+impl<R: Read + Seek> ArchiveIterator<R> {
+    pub fn next_header(&mut self) -> Option<ArchiveContents> {
+        debug_assert!(!self.closed);
+
+        if self.error {
+            return None;
+        }
+
+        let next = unsafe { self.unsafe_next_header() };
+
+        match &next {
+            ArchiveContents::StartOfEntry(name, stat) => {
+                if let Some(filter) = &self.filter {
+                    if !filter(name, stat) {
+                        return None;
+                    }
+                }
+
+                self.in_file = true;
+                Some(next)
+            }
+            ArchiveContents::Err(_) => {
+                self.error = true;
+                Some(next)
+            }
+            _ => None,
         }
     }
 }

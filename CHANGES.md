@@ -4,10 +4,13 @@
 
 ## [Unreleased] - ReleaseDate
 
+## [0.15.0] - 2024-07-02
+
 * Raise MSRV to 1.65.0
+* Add next_header() to ArchiveIterator [#122]
 * Fix use slice::from_raw_parts only if size > 0 [#126]
 * Add feature "static" to allow static linkage for unix/macos [#127]
-
+[#122]: https://github.com/OSSystems/compress-tools-rs/pull/122
 [#126]: https://github.com/OSSystems/compress-tools-rs/pull/126
 [#127]: https://github.com/OSSystems/compress-tools-rs/pull/127
 
