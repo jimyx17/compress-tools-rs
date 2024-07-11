@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use compress_tools::*;
+use core::panic;
 use std::{
     ffi::OsStr,
     fs::File,
@@ -809,10 +810,46 @@ fn iterate_archive_with_filter_path() {
 }
 
 #[test]
-fn compress_archive() {
-    let dest = File::create("tests/fixtures_out/compressed.tar").unwrap();
-    let mut a = ArchiveWriter::new(dest, ARCHIVE_FORMAT_7ZIP, ARCHIVE_FILTER_ZSTD).unwrap();
-    a.set_compression_high().unwrap();
+fn compress_archive_7z() {
+    let dest = File::create("tests/fixtures_out/compressed.7z").unwrap();
+    let mut a = ArchiveWriter::new(dest).unwrap();
+    a.set_output_7zlzma2().unwrap();
+    a.open().unwrap(); 
+    a.add_file("tests/fixtures/tree.tar", "E/output.xz").unwrap();
+}
+
+#[test]
+fn compress_archive_zip() {
+    let dest = File::create("tests/fixtures_out/compressed.zip").unwrap();
+    let mut a = ArchiveWriter::new(dest).unwrap();
+    a.set_output_zip().unwrap();
+    a.open().unwrap(); 
+    a.add_file("tests/fixtures/tree.tar", "E/output.xz").unwrap();
+}
+
+#[test]
+fn compress_archive_targz() {
+    let dest = File::create("tests/fixtures_out/compressed.tar.gz").unwrap();
+    let mut a = ArchiveWriter::new(dest).unwrap();
+    a.set_output_targz().unwrap();
+    a.open().unwrap(); 
+    a.add_file("tests/fixtures/tree.tar", "E/output.xz").unwrap();
+}
+
+#[test]
+fn compress_archive_tarxz() {
+    let dest = File::create("tests/fixtures_out/compressed.tar.xz").unwrap();
+    let mut a = ArchiveWriter::new(dest).unwrap();
+    a.set_output_tarxz().unwrap();
+    a.open().unwrap(); 
+    a.add_file("tests/fixtures/tree.tar", "E/output.xz").unwrap();
+}
+
+#[test]
+fn compress_archive_tarzst() {
+    let dest = File::create("tests/fixtures_out/compressed.tar.zst").unwrap();
+    let mut a = ArchiveWriter::new(dest).unwrap();
+    a.set_output_tarzst().unwrap();
     a.open().unwrap(); 
     a.add_file("tests/fixtures/tree.tar", "E/output.xz").unwrap();
 }

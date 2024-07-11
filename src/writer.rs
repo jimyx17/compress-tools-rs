@@ -14,11 +14,7 @@ use crate::{
         archive_entry_set_ctime, archive_entry_set_mode, archive_entry_set_mtime,
         archive_entry_set_pathname, archive_entry_set_perm, archive_entry_set_size,
         archive_write_data, archive_write_free, archive_write_header, mode_t, AE_IFREG,
-    },
-    error::archive_result,
-    Error, Result, AE_IFDIR, AE_IFLNK, ARCHIVE_FILTER_BZIP2, ARCHIVE_FILTER_GZIP,
-    ARCHIVE_FILTER_LRZIP, ARCHIVE_FILTER_LZ4, ARCHIVE_FILTER_LZIP, ARCHIVE_FILTER_LZMA,
-    ARCHIVE_FILTER_LZOP, ARCHIVE_FILTER_XZ, ARCHIVE_FILTER_ZSTD,
+    }, error::archive_result, Error, Result, AE_IFDIR, AE_IFLNK, ARCHIVE_FILTER_BZIP2, ARCHIVE_FILTER_GZIP, ARCHIVE_FILTER_LRZIP, ARCHIVE_FILTER_LZ4, ARCHIVE_FILTER_LZIP, ARCHIVE_FILTER_LZMA, ARCHIVE_FILTER_LZOP, ARCHIVE_FILTER_NONE, ARCHIVE_FILTER_XZ, ARCHIVE_FILTER_ZSTD, ARCHIVE_FORMAT_7ZIP, ARCHIVE_FORMAT_TAR, ARCHIVE_FORMAT_ZIP
 };
 use std::os::raw::c_int;
 
@@ -79,11 +75,13 @@ impl From<FSMeta> for Metadata {
 unsafe extern "C" fn archivewriter_writer<R: Write>(
     archive: *mut carchive::archive,
     client_data: *mut c_void,
-    _buffer: *const c_void,
+    buffer: *const c_void,
     size: usize,
 ) -> carchive::la_ssize_t {
     let writer = (client_data as *mut FileWriter<R>).as_mut().unwrap();
-    let writable = std::slice::from_raw_parts(_buffer as *const u8, size);
+    let writable = std::slice::from_raw_parts(buffer as *const u8, size);
+
+    println!("WRITING SIZE: {size}");
     match writer.obj.write(writable) {
         Ok(size) => size as carchive::la_ssize_t,
         Err(e) => {
@@ -99,7 +97,7 @@ unsafe extern "C" fn archivewriter_writer<R: Write>(
 }
 
 impl<R: Write> ArchiveWriter<R> {
-    pub fn new(dest: R, format: c_int, filter: c_int) -> Result<ArchiveWriter<R>>
+    pub fn new(dest: R) -> Result<ArchiveWriter<R>>
     where
         R: Write,
     {
@@ -112,48 +110,43 @@ impl<R: Write> ArchiveWriter<R> {
             }
 
             archive_result(
-                carchive::archive_write_add_filter(archive_writer, filter),
-                archive_writer,
-            )?;
-
-            archive_result(
-                carchive::archive_write_set_format(archive_writer, format),
+                carchive::archive_write_set_bytes_in_last_block(archive_writer, 1),
                 archive_writer,
             )?;
 
             Ok(ArchiveWriter {
                 archive_writer,
                 fileref: fref,
-                file_format: format,
-                file_filter: filter,
+                file_format: -1,
+                file_filter: -1,
             })
         }
     }
 
-    pub fn open(&mut self) -> Result<()> {
+    // Raw Archive API
+    pub fn set_output_format(&mut self, format: c_int) -> Result<()> {
         unsafe {
             archive_result(
-                carchive::archive_write_open(
-                    self.archive_writer,
-                    std::ptr::addr_of_mut!(*self.fileref) as *mut c_void,
-                    None,
-                    Some(archivewriter_writer::<R>),
-                    None,
-                ),
+                carchive::archive_write_set_format(self.archive_writer, format),
                 self.archive_writer,
             )?;
         }
+        self.file_format = format;
         Ok(())
     }
 
-    pub fn free(&mut self) -> Result<()> {
+    pub fn set_output_filter(&mut self, filter: c_int) -> Result<()> {
         unsafe {
-            archive_result(archive_write_free(self.archive_writer), self.archive_writer)?;
-        };
+            archive_result(
+                carchive::archive_write_add_filter(self.archive_writer, filter),
+                self.archive_writer,
+            )?;
+        }
+        self.file_filter = filter;
         Ok(())
     }
 
-    pub fn add_compression_option(&mut self, name: &str, value: &str) -> Result<()> {
+    pub fn add_filter_option(&mut self, name: &str, value: &str) -> Result<()> {
         let n = CString::new(name.to_string()).unwrap();
         let v = CString::new(value.to_string()).unwrap();
         unsafe {
@@ -170,52 +163,126 @@ impl<R: Write> ArchiveWriter<R> {
         Ok(())
     }
 
-    pub fn set_compression_high(&mut self) -> Result<()> {
-        let max_compression_level = match self.file_filter {
-            ARCHIVE_FILTER_BZIP2 => 9,
-            ARCHIVE_FILTER_GZIP => 9,
-            ARCHIVE_FILTER_LRZIP => 9,
-            ARCHIVE_FILTER_XZ => 9,
-            ARCHIVE_FILTER_LZ4 => 9,
-            ARCHIVE_FILTER_LZIP => 9,
-            ARCHIVE_FILTER_ZSTD => 22,
-            ARCHIVE_FILTER_LZMA => 9,
-            ARCHIVE_FILTER_LZOP => 9,
-            _ => return Err(Error::Unknown),
+    pub fn add_format_option(&mut self, name: &str, value: &str) -> Result<()> {
+        let n = CString::new(name.to_string()).unwrap();
+        let v = CString::new(value.to_string()).unwrap();
+        unsafe {
+            archive_result(
+                carchive::archive_write_set_format_option(
+                    self.archive_writer,
+                    null_mut(),
+                    n.as_ptr(),
+                    v.as_ptr(),
+                ),
+                self.archive_writer,
+            )?;
         };
-        self.add_compression_option("compression-level", &max_compression_level.to_string())
+        Ok(())
     }
 
-    pub fn set_compression_mid(&mut self) -> Result<()> {
-        let max_compression_level = match self.file_filter {
-            ARCHIVE_FILTER_BZIP2 => 9,
-            ARCHIVE_FILTER_GZIP => 9,
-            ARCHIVE_FILTER_LRZIP => 9,
-            ARCHIVE_FILTER_XZ => 9,
-            ARCHIVE_FILTER_LZ4 => 9,
-            ARCHIVE_FILTER_LZIP => 9,
-            ARCHIVE_FILTER_ZSTD => 22,
-            ARCHIVE_FILTER_LZMA => 9,
-            ARCHIVE_FILTER_LZOP => 9,
-            _ => return Err(Error::Unknown),
-        };
-        self.add_compression_option("compression-level", &(max_compression_level/2).to_string())
+    pub fn open(&mut self) -> Result<()> {
+        if self.file_format < 0 || self.file_filter < 0 {
+            return Err(Error::IncompleteInitialization);
+        }
+        unsafe {
+            archive_result(
+                carchive::archive_write_open(
+                    self.archive_writer,
+                    std::ptr::addr_of_mut!(*self.fileref) as *mut c_void,
+                    None,
+                    Some(archivewriter_writer::<R>),
+                    None,
+                ),
+                self.archive_writer,
+            )?;
+        }
+        Ok(())
     }
 
-    pub fn set_compression_low(&mut self) -> Result<()> {
-        let max_compression_level = match self.file_filter {
-            ARCHIVE_FILTER_BZIP2 => 0,
-            ARCHIVE_FILTER_GZIP => 0,
-            ARCHIVE_FILTER_LRZIP => 0,
-            ARCHIVE_FILTER_XZ => 0,
-            ARCHIVE_FILTER_LZ4 => 0,
-            ARCHIVE_FILTER_LZIP => 0,
-            ARCHIVE_FILTER_ZSTD => 0,
-            ARCHIVE_FILTER_LZMA => 0,
-            ARCHIVE_FILTER_LZOP => 0,
-            _ => return Err(Error::Unknown),
-        };
-        self.add_compression_option("compression-level", &max_compression_level.to_string())
+    // this free is not meant to called directly. Only by borrow system
+    fn free(&mut self) -> Result<()> {
+        unsafe { archive_result(archive_write_free(self.archive_writer), self.archive_writer) }
+    }
+
+    // this is only for output write filter.
+    // pub fn set_compression_high(&mut self) -> Result<()> {
+    //     let max_compression_level = match self.file_filter {
+    //         ARCHIVE_FILTER_BZIP2 => 9,
+    //         ARCHIVE_FILTER_GZIP => 9,
+    //         ARCHIVE_FILTER_LRZIP => 9,
+    //         ARCHIVE_FILTER_XZ => 9,
+    //         ARCHIVE_FILTER_LZ4 => 9,
+    //         ARCHIVE_FILTER_LZIP => 9,
+    //         ARCHIVE_FILTER_ZSTD => 22,
+    //         ARCHIVE_FILTER_LZMA => 9,
+    //         ARCHIVE_FILTER_LZOP => 9,
+    //         _ => return Err(Error::UnknownFilter),
+    //     };
+    //     self.add_compression_option("compression-level", &max_compression_level.to_string())
+    // }
+
+    // pub fn set_compression_mid(&mut self) -> Result<()> {
+    //     let max_compression_level = match self.file_filter {
+    //         ARCHIVE_FILTER_BZIP2 => 9,
+    //         ARCHIVE_FILTER_GZIP => 9,
+    //         ARCHIVE_FILTER_LRZIP => 9,
+    //         ARCHIVE_FILTER_XZ => 9,
+    //         ARCHIVE_FILTER_LZ4 => 9,
+    //         ARCHIVE_FILTER_LZIP => 9,
+    //         ARCHIVE_FILTER_ZSTD => 22,
+    //         ARCHIVE_FILTER_LZMA => 9,
+    //         ARCHIVE_FILTER_LZOP => 9,
+    //         _ => return Err(Error::UnknownFormat),
+    //     };
+    //     self.add_compression_option(
+    //         "compression-level",
+    //         &(max_compression_level / 2).to_string(),
+    //     )
+    // }
+
+    // pub fn set_compression_low(&mut self) -> Result<()> {
+    //     let max_compression_level = match self.file_filter {
+    //         ARCHIVE_FILTER_BZIP2 => 0,
+    //         ARCHIVE_FILTER_GZIP => 0,
+    //         ARCHIVE_FILTER_LRZIP => 0,
+    //         ARCHIVE_FILTER_XZ => 0,
+    //         ARCHIVE_FILTER_LZ4 => 0,
+    //         ARCHIVE_FILTER_LZIP => 0,
+    //         ARCHIVE_FILTER_ZSTD => 0,
+    //         ARCHIVE_FILTER_LZMA => 0,
+    //         ARCHIVE_FILTER_LZOP => 0,
+    //         _ => return Err(Error::Unknown),
+    //     };
+    //     self.add_compression_option("compression-level", &max_compression_level.to_string())
+    // }
+
+    // Simple Rust API. Nothing else but call new and then set format and add objects
+    // it cannot be simpler
+    pub fn set_output_targz(&mut self) -> Result<()> {
+        self.set_output_format(ARCHIVE_FORMAT_TAR)?;
+        self.set_output_filter(ARCHIVE_FILTER_GZIP)
+    }
+
+    pub fn set_output_tarxz(&mut self) -> Result<()> {
+        self.set_output_format(ARCHIVE_FORMAT_TAR)?;
+        self.set_output_filter(ARCHIVE_FILTER_XZ)
+    }
+
+    pub fn set_output_tarzst(&mut self) -> Result<()> {
+        self.set_output_format(ARCHIVE_FORMAT_TAR)?;
+        self.set_output_filter(ARCHIVE_FILTER_ZSTD)
+    }
+
+    pub fn set_output_7zlzma2(&mut self) -> Result<()> {
+        self.set_output_format(ARCHIVE_FORMAT_7ZIP)?;
+        self.set_output_filter(ARCHIVE_FILTER_NONE)?;
+        self.add_format_option("compression", "lzma2")
+    }
+
+    pub fn set_output_zip(&mut self) -> Result<()>{
+        self.set_output_format(ARCHIVE_FORMAT_ZIP)?;
+        self.set_output_filter(ARCHIVE_FILTER_NONE)?;
+        self.add_format_option("compression", "deflate")
     }
 
     pub fn add_obj_from_reader<S: Read>(
@@ -239,6 +306,8 @@ impl<R: Write> ArchiveWriter<R> {
             archive_entry_set_mtime(entry, objmeta.mtime, objmeta.mtime_nano);
             archive_entry_set_atime(entry, objmeta.atime, objmeta.atime_nano);
             archive_entry_set_pathname(entry, p.as_ptr());
+            let p = objmeta.perm;
+            println!("PERM: {p}");
 
             archive_result(
                 archive_write_header(self.archive_writer, entry),
