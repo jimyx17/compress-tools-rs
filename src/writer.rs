@@ -305,7 +305,6 @@ impl<R: Write> ArchiveWriter<R> {
             archive_entry_set_mtime(entry, objmeta.mtime, objmeta.mtime_nano);
             archive_entry_set_atime(entry, objmeta.atime, objmeta.atime_nano);
             archive_entry_set_pathname(entry, p.as_ptr());
-            let p = objmeta.perm;
 
             archive_result(
                 archive_write_header(self.archive_writer, entry),
