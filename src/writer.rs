@@ -81,7 +81,6 @@ unsafe extern "C" fn archivewriter_writer<R: Write>(
     let writer = (client_data as *mut FileWriter<R>).as_mut().unwrap();
     let writable = std::slice::from_raw_parts(buffer as *const u8, size);
 
-    println!("WRITING SIZE: {size}");
     match writer.obj.write(writable) {
         Ok(size) => size as carchive::la_ssize_t,
         Err(e) => {
@@ -307,7 +306,6 @@ impl<R: Write> ArchiveWriter<R> {
             archive_entry_set_atime(entry, objmeta.atime, objmeta.atime_nano);
             archive_entry_set_pathname(entry, p.as_ptr());
             let p = objmeta.perm;
-            println!("PERM: {p}");
 
             archive_result(
                 archive_write_header(self.archive_writer, entry),
